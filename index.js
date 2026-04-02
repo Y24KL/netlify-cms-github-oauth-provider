@@ -1,34 +1,40 @@
-const simpleOauthModule = require('simple-oauth2')
-const authMiddleWareInit = require('./auth.js')
-const callbackMiddleWareInit = require('./callback')
-const oauthProvider = process.env.OAUTH_PROVIDER || 'github'
-const loginAuthTarget = process.env.AUTH_TARGET || '_self'
+const express = require('express');
+const axios = require('axios');
+const app = express();
 
-const config = {
-  client: {
-    id: process.env.OAUTH_CLIENT_ID,
-    secret: process.env.OAUTH_CLIENT_SECRET
-  },
-  auth: {
-    // Supply GIT_HOSTNAME for enterprise github installs.
-    tokenHost: process.env.GIT_HOSTNAME || 'https://github.com',
-    tokenPath: process.env.OAUTH_TOKEN_PATH || '/login/oauth/access_token',
-    authorizePath: process.env.OAUTH_AUTHORIZE_PATH || '/login/oauth/authorize'
+const port = process.env.PORT || 3000;
+
+app.get('/auth', (req, res) => {
+  res.redirect(`https://github.com/login/oauth/authorize?client_id=${process.env.OAUTH_CLIENT_ID}&scope=repo,user`);
+});
+
+app.get('/callback', async (req, res) => {
+  const { code } = req.query;
+  try {
+    const response = await axios.post('https://github.com/login/oauth/access_token', {
+      client_id: process.env.OAUTH_CLIENT_ID,
+      client_secret: process.env.OAUTH_CLIENT_SECRET,
+      code,
+    }, {
+      headers: { Accept: 'application/json' },
+    });
+
+    const { access_token } = response.data;
+
+    res.send(`
+      <html><body><script>
+        (function() {
+          function recieveMessage(e) {
+            window.opener.postMessage('authorization:github:success:{"token":"${access_token}","provider":"github"}', e.origin);
+          }
+          window.addEventListener("message", recieveMessage, false);
+          window.opener.postMessage("authorizing:github", "*");
+        })()
+      </script></body></html>
+    `);
+  } catch (error) {
+    res.send(error.message);
   }
-}
+});
 
-const oauth2 = new simpleOauthModule.AuthorizationCode(config)
-
-function indexMiddleWare (req, res) {
-  res.send(`Hello<br>
-    <a href="/auth" target="${loginAuthTarget}">
-      Log in with ${oauthProvider.toUpperCase()}
-    </a>`)
-}
-
-module.exports = {
-  auth: authMiddleWareInit(oauth2),
-  callback: callbackMiddleWareInit(oauth2, oauthProvider),
-  success: (req, res) => { res.send('') },
-  index: indexMiddleWare
-}
+app.listen(port, () => console.log(`Proxy listening on port ${port}`));
